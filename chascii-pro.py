@@ -259,36 +259,41 @@ def redimensionar(
 # BUSCAR ARCHIVO
 # =========================================================
 
-def encontrar_archivo(
-    nombre: str
-) -> str:
+from pathlib import Path
+import platform
 
+def encontrar_archivo(nombre: str) -> str:
     ruta = Path(nombre)
 
     if ruta.is_file():
         return str(ruta)
 
+    # Definimos rutas base comunes para ambos sistemas
     carpetas = [
         Path.home() / "Pictures",
         Path.home() / "Downloads",
         Path.home() / "Imágenes",
-        Path.home() / "Descargas"
+        Path.home() / "Descargas",
+        Path.home() / "Documents",
+        Path.home() / "Documentos",
+        Path.home() / "Desktop",
+        Path.home() / "Escritorio"
     ]
 
+    # Caso específico para Windows: Añadir carpetas de sistema adicionales si fuera necesario
+    if platform.system() == "Windows":
+        # Ejemplo: Buscar también en la carpeta pública si quieres ser más exhaustivo
+        carpetas.append(Path("C:/Users/Public/Pictures"))
+
     for carpeta in carpetas:
-
         if carpeta.exists():
-
-            resultados = list(
-                carpeta.rglob(nombre)
-            )
-
+            # rglob busca de forma recursiva en subcarpetas
+            resultados = list(carpeta.rglob(nombre))
             if resultados:
-                return str(
-                    resultados[0]
-                )
+                return str(resultados[0])
 
     return nombre
+
 
 
 # =========================================================
