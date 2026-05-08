@@ -1,4 +1,4 @@
-# CH_imgToAscii
+# CHASCII-PRO
 Convertidor de imagen a arte ASCII hecho con python.
 
 ----------------------------------------------------------------------------------------------------
@@ -7,6 +7,8 @@ Convertidor de imagen a arte ASCII hecho con python.
 
 ### < chascii-pro image.jpg >  
 Para mas precision agregar al final un ancho  ---> < -w 180 >
+
+----------------------------------------------------------------------------------------------------
 
 ## Algunas muestras:
 
