@@ -1,77 +1,470 @@
 import argparse
-import shutil  # Para detectar el tamaño de la terminal
+import shutil
 from pathlib import Path
-from typing import Any, List
-from PIL import Image, ImageOps, ImageEnhance
+from typing import cast
 
-# Paleta profesional con raw string (r"") para evitar errores de escape
-ASCII_CHARS = r"$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+from PIL import (
+    Image,
+    ImageOps,
+    ImageEnhance,
+    ImageFilter
+)
 
-def optimizar_imagen(img: Image.Image) -> Image.Image:
+# =========================================================
+# CONFIG
+# =========================================================
+
+ASCII_CHARS = "@%#*+=-:. "
+
+# Compatibilidad universal Pillow
+try:
+    RESAMPLE = Image.Resampling.LANCZOS
+except Exception:
+    RESAMPLE = 1
+
+# =========================================================
+# UTILIDADES
+# =========================================================
+
+def clamp(value: float) -> int:
+
+    return max(
+        0,
+        min(255, int(value))
+    )
+
+
+# =========================================================
+# GAMMA
+# =========================================================
+
+def ajustar_gamma(
+    img: Image.Image,
+    gamma: float = 1.15
+) -> Image.Image:
+
+    tabla = []
+
+    for i in range(256):
+
+        corregido = (
+            (i / 255.0) ** gamma
+        ) * 255
+
+        tabla.append(
+            clamp(corregido)
+        )
+
+    return img.point(tabla)
+
+
+# =========================================================
+# DITHERING
+# =========================================================
+
+def dithering(
+    img: Image.Image
+) -> Image.Image:
+
     img = img.convert("L")
-    img = ImageEnhance.Contrast(img).enhance(1.5)
-    img = ImageEnhance.Sharpness(img).enhance(2.0)
-    img = ImageOps.autocontrast(img)
+
+    w, h = img.size
+
+    pixels = img.load()
+
+    if pixels is None:
+        return img
+
+    for y in range(h - 1):
+
+        for x in range(1, w - 1):
+
+            old_pixel = int(
+                cast(int, pixels[x, y])
+            )
+
+            new_pixel = (
+                255 if old_pixel > 127
+                else 0
+            )
+
+            pixels[x, y] = new_pixel
+
+            error = old_pixel - new_pixel
+
+            # derecha
+            right = int(
+                cast(int, pixels[x + 1, y])
+            )
+
+            pixels[x + 1, y] = clamp(
+                right + error * 7 / 16
+            )
+
+            # abajo izquierda
+            bottom_left = int(
+                cast(int, pixels[x - 1, y + 1])
+            )
+
+            pixels[x - 1, y + 1] = clamp(
+                bottom_left + error * 3 / 16
+            )
+
+            # abajo
+            bottom = int(
+                cast(int, pixels[x, y + 1])
+            )
+
+            pixels[x, y + 1] = clamp(
+                bottom + error * 5 / 16
+            )
+
+            # abajo derecha
+            bottom_right = int(
+                cast(
+                    int,
+                    pixels[x + 1, y + 1]
+                )
+            )
+
+            pixels[x + 1, y + 1] = clamp(
+                bottom_right + error * 1 / 16
+            )
+
     return img
 
-def redimensionar(img: Image.Image, nuevo_ancho: int) -> Image.Image:
-    w_orig, h_orig = img.size
-    ratio = h_orig / w_orig
-    nuevo_alto = int(nuevo_ancho * ratio * 0.5)
-    return img.resize((nuevo_ancho, nuevo_alto), resample=1)
 
-def encontrar_archivo(nombre: str) -> str:
+# =========================================================
+# PROCESAMIENTO
+# =========================================================
+
+def optimizar_imagen(
+    img: Image.Image
+) -> Image.Image:
+
+    img = img.convert("RGB")
+
+    # -------------------------------------------------
+    # UPSCALE
+    # -------------------------------------------------
+
+    w, h = img.size
+
+    upscale = 2
+
+    img = img.resize(
+        (
+            w * upscale,
+            h * upscale
+        ),
+        RESAMPLE
+    )
+
+    # -------------------------------------------------
+    # CONTRASTE
+    # -------------------------------------------------
+
+    img = ImageOps.autocontrast(
+        img,
+        cutoff=1
+    )
+
+    img = ImageEnhance.Contrast(
+        img
+    ).enhance(1.2)
+
+    # -------------------------------------------------
+    # SHARPEN
+    # -------------------------------------------------
+
+    img = ImageEnhance.Sharpness(
+        img
+    ).enhance(2.2)
+
+    # -------------------------------------------------
+    # UNSHARP MASK
+    # -------------------------------------------------
+
+    img = img.filter(
+        ImageFilter.UnsharpMask(
+            radius=2,
+            percent=220,
+            threshold=2
+        )
+    )
+
+    # -------------------------------------------------
+    # EDGES
+    # -------------------------------------------------
+
+    edges = img.filter(
+        ImageFilter.FIND_EDGES
+    )
+
+    img = Image.blend(
+        img,
+        edges,
+        0.10
+    )
+
+    # -------------------------------------------------
+    # GRAYSCALE
+    # -------------------------------------------------
+
+    img = img.convert("L")
+
+    # -------------------------------------------------
+    # GAMMA
+    # -------------------------------------------------
+
+    img = ajustar_gamma(
+        img,
+        0.9
+    )
+
+    # -------------------------------------------------
+    # CONTRASTE FINAL
+    # -------------------------------------------------
+
+    img = ImageOps.autocontrast(img)
+
+    return img
+
+
+# =========================================================
+# REDIMENSIONAR
+# =========================================================
+
+def redimensionar(
+    img: Image.Image,
+    ancho: int
+) -> Image.Image:
+
+    w, h = img.size
+
+    ratio = h / w
+
+    alto = max(
+        1,
+        int(ancho * ratio * 0.50)
+    )
+
+    return img.resize(
+        (ancho, alto),
+        RESAMPLE
+    )
+
+
+# =========================================================
+# BUSCAR ARCHIVO
+# =========================================================
+
+def encontrar_archivo(
+    nombre: str
+) -> str:
+
     ruta = Path(nombre)
+
     if ruta.is_file():
         return str(ruta)
-    
-    # Carpetas de búsqueda en Arch/KDE
-    carpetas = [Path.home() / "Pictures", Path.home() / "Downloads", Path.home() / "Imágenes", Path.home() / "Descargas"]
-    
+
+    carpetas = [
+        Path.home() / "Pictures",
+        Path.home() / "Downloads",
+        Path.home() / "Imágenes",
+        Path.home() / "Descargas"
+    ]
+
     for carpeta in carpetas:
+
         if carpeta.exists():
-            busqueda = list(carpeta.rglob(nombre))
-            if busqueda:
-                return str(busqueda[0])
+
+            resultados = list(
+                carpeta.rglob(nombre)
+            )
+
+            if resultados:
+                return str(
+                    resultados[0]
+                )
+
     return nombre
 
-def imagen_a_ascii(ruta: str, ancho: int) -> str:
+
+# =========================================================
+# PIXEL -> ASCII
+# =========================================================
+
+def pixel_a_ascii(pixel: int) -> str:
+
+    # Invertir brillo correctamente
+    norm = 1.0 - (pixel / 255.0)
+
+    # Curva perceptual más suave
+    norm = norm ** 1.1
+
+    idx = int(
+        norm * (len(ASCII_CHARS) - 1)
+    )
+
+    idx = max(
+        0,
+        min(idx, len(ASCII_CHARS) - 1)
+    )
+
+    return ASCII_CHARS[idx]
+
+
+# =========================================================
+# IMAGEN -> ASCII
+# =========================================================
+
+def imagen_a_ascii(
+    ruta: str,
+    ancho: int,
+    usar_dither: bool = True
+) -> str:
+
     try:
+
         with Image.open(ruta) as img:
+
             img = optimizar_imagen(img)
-            img = redimensionar(img, ancho)
-            
-            datos: Any = img.getdata()
-            pixeles: List[int] = list(datos)
-            
-            rango = len(ASCII_CHARS) - 1
-            # Mapeo optimizado
-            ascii_lista = [ASCII_CHARS[rango - (p * rango // 255)] for p in pixeles]
-            
-            return "\n".join("".join(ascii_lista[i:i+ancho]) for i in range(0, len(ascii_lista), ancho))
+
+            img = redimensionar(
+                img,
+                ancho
+            )
+
+            if usar_dither:
+                img = dithering(img)
+
+            pixels = list(
+                cast(list[int], img.getdata())
+            )
+
+            ascii_chars = []
+
+            for pixel in pixels:
+
+                ascii_chars.append(
+                    pixel_a_ascii(
+                        int(pixel)
+                    )
+                )
+
+            w = img.width
+
+            lineas = []
+
+            for i in range(
+                0,
+                len(ascii_chars),
+                w
+            ):
+
+                linea = "".join(
+                    ascii_chars[i:i + w]
+                )
+
+                lineas.append(linea)
+
+            return "\n".join(lineas)
+
     except Exception as e:
-        return f"Error: No se pudo procesar la imagen. {e}"
+
+        return (
+            "Error procesando imagen:\n"
+            f"{e}"
+        )
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
-    # Detectar ancho de la terminal automáticamente
-    ancho_terminal, _ = shutil.get_terminal_size()
-    
-    parser = argparse.ArgumentParser(description="ASCII Art Studio Pro")
-    parser.add_argument("ruta", help="Nombre o ruta de la imagen")
-    parser.add_argument("-w", "--width", type=int, default=ancho_terminal, help="Ancho del arte")
-    parser.add_argument("-o", "--output", help="Archivo de salida")
+
+    term_width, _ = shutil.get_terminal_size(
+        fallback=(100, 30)
+    )
+
+    default_width = min(
+        120,
+        term_width - 2
+    )
+
+    parser = argparse.ArgumentParser(
+        description="ASCII Art Ultra"
+    )
+
+    parser.add_argument(
+        "ruta",
+        help="Ruta imagen"
+    )
+
+    parser.add_argument(
+        "-w",
+        "--width",
+        type=int,
+        default=default_width,
+        help="Ancho ASCII"
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Guardar resultado"
+    )
+
+    parser.add_argument(
+        "--no-dither",
+        action="store_true",
+        help="Desactivar dithering"
+    )
+
     args = parser.parse_args()
 
-    ruta_final = encontrar_archivo(args.ruta)
-    print(f"--- Procesando: {ruta_final} ---")
-    
-    resultado = imagen_a_ascii(ruta_final, args.width)
+    ruta = encontrar_archivo(
+        args.ruta
+    )
+
+    ancho = max(
+        20,
+        min(
+            args.width,
+            term_width - 1
+        )
+    )
+
+    resultado = imagen_a_ascii(
+        ruta,
+        ancho,
+        not args.no_dither
+    )
+
+    print()
+
+    print(f"Procesando: {ruta}")
+    print(f"Ancho: {ancho}")
+
+    print()
 
     if args.output:
-        Path(args.output).write_text(resultado, encoding="utf-8")
-        print(f"Guardado con éxito en: {args.output}")
+
+        Path(args.output).write_text(
+            resultado,
+            encoding="utf-8"
+        )
+
+        print(
+            f"Guardado en: {args.output}"
+        )
+
     else:
+
         print(resultado)
+
 
 if __name__ == "__main__":
     main()
